@@ -55,3 +55,16 @@ void serial_close(t_serial_ctx *ctx) {
     close(ctx->fd);
   free(ctx);
 }
+
+
+int serial_start_recv(t_serial_ctx *ctx) {
+  (void)ctx;
+  return (0);
+}
+
+void serial_stop_recv(t_serial_ctx *ctx) { (void)ctx; }
+
+void serial_get_state(t_serial_ctx *ctx, t_car_state *out) {
+  (void)ctx;
+  (void)out;
+}
