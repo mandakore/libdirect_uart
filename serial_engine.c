@@ -6,56 +6,52 @@
 #include <termios.h>
 #include <unistd.h>
 
-
-
-static uint64_t get_timestamp_ms(void) 
+static uint64_t	get_timestamp_ms(void)
 {
-  struct timeval tv;
+	struct timeval	tv;
 
-  gettimeofday(&tv, NULL);
-  return ((uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000);
+	gettimeofday(&tv, NULL);
+	return ((uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000);
 }
 
-
-
-static int configure_port(int fd, int baud)
+static int	configure_port(int fd, int baud)
 {
-  struct termios tty;
+	struct termios	tty;
 
-  memset(&tty, 0, sizeof(tty));
-  if (tcgetattr(fd, &tty) != 0)
-    return (-1);
-  cfsetispeed(&tty, baud);
-  cfsetospeed(&tty, baud);
-  tty.c_cflag |= (CLOCAL | CREAD);
-  tty.c_cflag &= ~PARENB;
-  tty.c_cflag &= ~CSTOPB;
-  tty.c_cflag &= ~CSIZE;
-  tty.c_cflag |= CS8;
-  tty.c_iflag &= ~(IXON | IXOFF | IXANY);
-  tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
-  tty.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-  tty.c_oflag &= ~OPOST;
-  tty.c_cc[VMIN] = 0;
-  tty.c_cc[VTIME] = 1;
-  if (tcsetattr(fd, TCSANOW, &tty) != 0)
-    return (-1);
-  return (0);
+	memset(&tty, 0, sizeof(tty));
+	if (tcgetattr(fd, &tty) != 0)
+		return (-1);
+	cfsetispeed(&tty, baud);
+	cfsetospeed(&tty, baud);
+	tty.c_cflag |= (CLOCAL | CREAD);
+	tty.c_cflag &= ~PARENB;
+	tty.c_cflag &= ~CSTOPB;
+	tty.c_cflag &= ~CSIZE;
+	tty.c_cflag |= CS8;
+	tty.c_iflag &= ~(IXON | IXOFF | IXANY);
+	tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
+	tty.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+	tty.c_oflag &= ~OPOST;
+	tty.c_cc[VMIN] = 0;
+	tty.c_cc[VTIME] = 1;
+	if (tcsetattr(fd, TCSANOW, &tty) != 0)
+		return (-1);
+	return (0);
 }
 
-
-static uint8_t compute_checksum(const uint8_t *data, int len) 
+static uint8_t	compute_checksum(const uint8_t *data, int len)
 {
-  uint8_t cs;
-  int i;
+	uint8_t	cs;
+	int		i;
 
-  cs = 0;
-  i = 0;
-  while (i < len) {
-    cs ^= data[i];
-    i++;
-  }
-  return (cs);
+	cs = 0;
+	i = 0;
+	while (i < len)
+	{
+		cs ^= data[i];
+		i++;
+	}
+	return (cs);
 }
 
 /*
@@ -91,149 +87,146 @@ static uint8_t compute_checksum(const uint8_t *data, int len)
 ** and just validate the header byte. This keeps PACKET_SIZE = 23.
 */
 
-static void parse_packet(t_serial_ctx *ctx, const uint8_t *pkt) 
+static void	parse_packet(t_serial_ctx *ctx, const uint8_t *pkt)
 {
-  (void)compute_checksum;
-  pthread_mutex_lock(&ctx->state.mutex);
-  memcpy(&ctx->state.x, &pkt[1], sizeof(float));
-  memcpy(&ctx->state.y, &pkt[5], sizeof(float));
-  memcpy(&ctx->state.speed, &pkt[9], sizeof(float));
-  memcpy(&ctx->state.angle, &pkt[13], sizeof(float));
-  memcpy(&ctx->state.sensor_dist[0], &pkt[17], sizeof(uint16_t));
-  memcpy(&ctx->state.sensor_dist[1], &pkt[19], sizeof(uint16_t));
-  memcpy(&ctx->state.sensor_dist[2], &pkt[21], sizeof(uint16_t));
-  ctx->state.timestamp = get_timestamp_ms();
-  pthread_mutex_unlock(&ctx->state.mutex);
+	(void)compute_checksum;
+	pthread_mutex_lock(&ctx->state.mutex);
+	memcpy(&ctx->state.x, &pkt[1], sizeof(float));
+	memcpy(&ctx->state.y, &pkt[5], sizeof(float));
+	memcpy(&ctx->state.speed, &pkt[9], sizeof(float));
+	memcpy(&ctx->state.angle, &pkt[13], sizeof(float));
+	memcpy(&ctx->state.sensor_dist[0], &pkt[17], sizeof(uint16_t));
+	memcpy(&ctx->state.sensor_dist[1], &pkt[19], sizeof(uint16_t));
+	memcpy(&ctx->state.sensor_dist[2], &pkt[21], sizeof(uint16_t));
+	ctx->state.timestamp = get_timestamp_ms();
+	pthread_mutex_unlock(&ctx->state.mutex);
 }
 
-
-static void process_ring_buffer(t_serial_ctx *ctx) 
+static void	process_ring_buffer(t_serial_ctx *ctx)
 {
-  uint8_t peek_buf[PACKET_SIZE];
-  int avail;
+	uint8_t	peek_buf[PACKET_SIZE];
+	int		avail;
 
-  while (1)
-  {
-    avail = rb_available(&ctx->rb);
-    if (avail < PACKET_SIZE)
-      return;
-    rb_peek(&ctx->rb, peek_buf, 1);
-    if (peek_buf[0] != PACKET_HEADER)
-    {
-      rb_discard(&ctx->rb, 1);
-      continue;
-    }
-    if (rb_peek(&ctx->rb, peek_buf, PACKET_SIZE) < PACKET_SIZE)
-      return;
-    rb_discard(&ctx->rb, PACKET_SIZE);
-    parse_packet(ctx, peek_buf);
-  }
+	while (1)
+	{
+		avail = rb_available(&ctx->rb);
+		if (avail < PACKET_SIZE)
+			return ;
+		rb_peek(&ctx->rb, peek_buf, 1);
+		if (peek_buf[0] != PACKET_HEADER)
+		{
+			rb_discard(&ctx->rb, 1);
+			continue ;
+		}
+		if (rb_peek(&ctx->rb, peek_buf, PACKET_SIZE) < PACKET_SIZE)
+			return ;
+		rb_discard(&ctx->rb, PACKET_SIZE);
+		parse_packet(ctx, peek_buf);
+	}
 }
 
-
-
-static void *receiver_loop(void *arg) 
+static void	*receiver_loop(void *arg)
 {
-  t_serial_ctx *ctx;
-  uint8_t tmp[256];
-  ssize_t n;
+	t_serial_ctx	*ctx;
+	uint8_t			tmp[256];
+	ssize_t			n;
 
-  ctx = (t_serial_ctx *)arg;
-  while (ctx->running)
-  {
-    n = read(ctx->fd, tmp, sizeof(tmp));
-    if (n > 0)
-    {
-      rb_write(&ctx->rb, tmp, (int)n);
-      process_ring_buffer(ctx);
-    } 
-    else
-      usleep(500);
-  }
-  return (NULL);
+	ctx = (t_serial_ctx *)arg;
+	while (ctx->running)
+	{
+		n = read(ctx->fd, tmp, sizeof(tmp));
+		if (n > 0)
+		{
+			rb_write(&ctx->rb, tmp, (int)n);
+			process_ring_buffer(ctx);
+		}
+		else
+			usleep(500);
+	}
+	return (NULL);
 }
 
-
-t_serial_ctx *serial_open(const char *device, int baud) 
+t_serial_ctx	*serial_open(const char *device, int baud)
 {
-  t_serial_ctx *ctx;
+	t_serial_ctx	*ctx;
 
-  ctx = (t_serial_ctx *)malloc(sizeof(t_serial_ctx));
-  if (!ctx)
-    return (NULL);
-  memset(ctx, 0, sizeof(t_serial_ctx));
-  ctx->fd = open(device, O_RDWR | O_NOCTTY | O_NONBLOCK);
-  if (ctx->fd < 0)
-  {
-    free(ctx);
-    return (NULL);
-  }
-  if (baud == 0)
-    baud = DEFAULT_BAUD;
-  if (configure_port(ctx->fd, baud) < 0)
-  {
-    close(ctx->fd);
-    free(ctx);
-    return (NULL);
-  }
-  rb_init(&ctx->rb);
-  pthread_mutex_init(&ctx->state.mutex, NULL);
-  ctx->running = 0;
-  return (ctx);
+	ctx = (t_serial_ctx *)malloc(sizeof(t_serial_ctx));
+	if (!ctx)
+		return (NULL);
+	memset(ctx, 0, sizeof(t_serial_ctx));
+	ctx->fd = open(device, O_RDWR | O_NOCTTY | O_NONBLOCK);
+	if (ctx->fd < 0)
+	{
+		free(ctx);
+		return (NULL);
+	}
+	if (baud == 0)
+		baud = DEFAULT_BAUD;
+	if (configure_port(ctx->fd, baud) < 0)
+	{
+		close(ctx->fd);
+		free(ctx);
+		return (NULL);
+	}
+	rb_init(&ctx->rb);
+	pthread_mutex_init(&ctx->state.mutex, NULL);
+	ctx->running = 0;
+	return (ctx);
 }
 
-int serial_start_listener(t_serial_ctx *ctx) 
+int	serial_start_listener(t_serial_ctx *ctx)
 {
-  if (!ctx || ctx->running)
-    return (-1);
-  ctx->running = 1;
-  if (pthread_create(&ctx->thread, NULL, receiver_loop, ctx) != 0) {
-    ctx->running = 0;
-    return (-1);
-  }
-  return (0);
+	if (!ctx || ctx->running)
+		return (-1);
+	ctx->running = 1;
+	if (pthread_create(&ctx->thread, NULL, receiver_loop, ctx) != 0)
+	{
+		ctx->running = 0;
+		return (-1);
+	}
+	return (0);
 }
 
-int serial_get_state(t_serial_ctx *ctx, t_car_state *out) 
+int	serial_get_state(t_serial_ctx *ctx, t_car_state *out)
 {
-  if (!ctx || !out)
-    return (-1);
-  pthread_mutex_lock(&ctx->state.mutex);
-  out->x = ctx->state.x;
-  out->y = ctx->state.y;
-  out->speed = ctx->state.speed;
-  out->angle = ctx->state.angle;
-  memcpy(out->sensor_dist, ctx->state.sensor_dist,
-         sizeof(uint16_t) * SENSOR_COUNT);
-  out->timestamp = ctx->state.timestamp;
-  pthread_mutex_unlock(&ctx->state.mutex);
-  return (0);
+	if (!ctx || !out)
+		return (-1);
+	pthread_mutex_lock(&ctx->state.mutex);
+	out->x = ctx->state.x;
+	out->y = ctx->state.y;
+	out->speed = ctx->state.speed;
+	out->angle = ctx->state.angle;
+	memcpy(out->sensor_dist, ctx->state.sensor_dist,
+		sizeof(uint16_t) * SENSOR_COUNT);
+	out->timestamp = ctx->state.timestamp;
+	pthread_mutex_unlock(&ctx->state.mutex);
+	return (0);
 }
 
-int serial_send_command(t_serial_ctx *ctx, const uint8_t *data, int len)
+int	serial_send_command(t_serial_ctx *ctx, const uint8_t *data, int len)
 {
-  ssize_t written;
+	ssize_t	written;
 
-  if (!ctx || !data || len <= 0)
-    return (-1);
-  written = write(ctx->fd, data, len);
-  if (written < 0)
-    return (-1);
-  return ((int)written);
+	if (!ctx || !data || len <= 0)
+		return (-1);
+	written = write(ctx->fd, data, len);
+	if (written < 0)
+		return (-1);
+	return ((int)written);
 }
 
-void serial_close(t_serial_ctx *ctx) 
+void	serial_close(t_serial_ctx *ctx)
 {
-  if (!ctx)
-    return;
-  if (ctx->running)
-  {
-    ctx->running = 0;
-    pthread_join(ctx->thread, NULL);
-  }
-  pthread_mutex_destroy(&ctx->state.mutex);
-  pthread_mutex_destroy(&ctx->rb.mutex);
-  if (ctx->fd >= 0)
-    close(ctx->fd);
-  free(ctx);
+	if (!ctx)
+		return ;
+	if (ctx->running)
+	{
+		ctx->running = 0;
+		pthread_join(ctx->thread, NULL);
+	}
+	pthread_mutex_destroy(&ctx->state.mutex);
+	pthread_mutex_destroy(&ctx->rb.mutex);
+	if (ctx->fd >= 0)
+		close(ctx->fd);
+	free(ctx);
 }
